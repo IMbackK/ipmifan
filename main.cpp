@@ -57,8 +57,8 @@ std::vector<Sensor> gather_sensors(std::vector<Sensor>& ipmi_sensors, ipmi_monit
 
 double fan_curve(double temperature, double min_fan, double max_fan, double low_temperature, double high_temperature)
 {
-	double slope = (max_fan-min_fan)/(low_temperature-high_temperature);
-	return std::min(max_fan, min_fan+slope*temperature-low_temperature);
+	double slope = (max_fan-min_fan)/(high_temperature-low_temperature);
+	return std::max(std::min(max_fan, min_fan+slope*(temperature-low_temperature)), min_fan);
 }
 
 double gpu_fan_zone(const std::vector<Sensor>& sensors)
