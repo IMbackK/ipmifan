@@ -59,7 +59,7 @@ std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
 	std::vector<double> out;
 
 	for(const Sensor& sensor : sensors)
-		std::cout<<sensor.chip<<' '<<sensor.name<<": "<<sensor.reading;
+		std::cout<<sensor.chip<<' '<<sensor.name<<": "<<sensor.reading<<'\n';
 
 	return out;
 }
