@@ -1,3 +1,6 @@
+#include <cstddef>
+#include <cstdint>
+#include <freeipmi/api/ipmi-api.h>
 #include <vector>
 #include <string>
 #include <iostream>
@@ -7,9 +10,12 @@
 #include <sensors/error.h>
 #include <signal.h>
 #include <limits>
+#include <freeipmi/freeipmi.h>
 
 #include "ipmi.h"
 #include "lm.h"
+
+static constexpr size_t IPMI_RAW_MAX_ARGS = 65536*2;
 
 sig_atomic_t running = true;
 
@@ -108,6 +114,35 @@ std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
 	return out;
 }
 
+ipmi_ctx_t ipmi_open()
+{
+	ipmi_ctx_t ctx = nullptr;
+
+	ipmi_driver_type_t driver = IPMI_DEVICE_OPENIPMI;
+	int ret = ipmi_ctx_find_inband(ctx, &driver, false, 0, 0, nullptr, 0, 0);
+	if(ret < 0)
+	{
+		std::cerr<<"Could not create raw context "<<ipmi_ctx_errormsg(ctx)<<'\n';
+		return nullptr;
+	}
+	return ctx;
+}
+
+bool ipmi_set_fan_group(ipmi_ctx_t raw_ctx, uint8_t group, double speed)
+{
+	char converted_speed = std::min(std::max(static_cast<char>(64), static_cast<char>(speed*64)), static_cast<char>(0));
+
+	char command[] = {0x70, 0x66, 0x01, static_cast<char>(group), converted_speed};
+	char bytesrx[IPMI_RAW_MAX_ARGS] = {0};
+	int rxlen = ipmi_cmd_raw(raw_ctx, 0, 0x30, command, sizeof(command), bytesrx, IPMI_RAW_MAX_ARGS);
+	if(rxlen < 0)
+	{
+		std::cerr<<"Raw write to ipmi failed with: "<<ipmi_ctx_errormsg(raw_ctx);
+		return false;
+	}
+	return true;
+}
+
 int main (int argc, char **argv)
 {
 	signal(SIGABRT, sig_handler);
@@ -126,20 +161,28 @@ int main (int argc, char **argv)
 	ipmi_sensors.push_back(Sensor("IPMI", "CPU Temp"));
 	ipmi_sensors.push_back(Sensor("IPMI", "System Temp"));
 
-	ipmi_monitoring_ctx_t ctx = init_ipmi_monitoring();
-	if(!ctx)
+	ipmi_monitoring_ctx_t monitoring_ctx = init_ipmi_monitoring();
+	if(!monitoring_ctx)
 		return 1;
+
+	ipmi_ctx_t raw_ctx = ipmi_open();
+	if(!raw_ctx)
+		return 1;
+
+
 
 	while(running)
 	{
-		std::vector<Sensor> sensors = gather_sensors(ipmi_sensors, ctx, lm_chips);
+		std::vector<Sensor> sensors = gather_sensors(ipmi_sensors, monitoring_ctx, lm_chips);
 		std::vector<double> fanzones = get_fan_zones(sensors);
 		for(const double fanzone : fanzones)
 			std::cout<<fanzone<<'\n';
 		sleep(1);
 	}
 
-	ipmi_monitoring_ctx_destroy(ctx);
+	ipmi_ctx_close(raw_ctx);
+	ipmi_ctx_destroy(raw_ctx);
+	ipmi_monitoring_ctx_destroy(monitoring_ctx);
 	sensors_cleanup();
 	return 0;
 }
