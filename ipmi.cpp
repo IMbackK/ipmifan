@@ -16,6 +16,7 @@ static double ipmi_convert_sensor_reading(void *sensor_reading, int sensor_readi
 Sensor ipmi_read_sensor_from_ctx(ipmi_monitoring_ctx_t ctx)
 {
 	Sensor sensor;
+	sensor.chip = "IPMI";
 	int record_id = ipmi_monitoring_sensor_read_record_id(ctx);
 	int reading_type = ipmi_monitoring_sensor_read_sensor_reading_type(ctx);
 	char *name = ipmi_monitoring_sensor_read_sensor_name(ctx);

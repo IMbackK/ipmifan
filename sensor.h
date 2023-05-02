@@ -1,3 +1,5 @@
+#pragma once
+
 #include <string>
 
 class Sensor
@@ -10,6 +12,6 @@ public:
 
 public:
 	Sensor() = default;
-	Sensor(std::string chipI, std::string nameI, int idI = 0): name(nameI), chip(chipI), name(nameI), id(idI) {}
+	Sensor(std::string chipI, std::string nameI, int idI = 0): name(nameI), chip(chipI), id(idI) {}
 	bool operator==(const Sensor& other) {return other.name == name && other.chip == chip;}
 };
