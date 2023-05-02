@@ -83,7 +83,7 @@ double gpu_fan_zone(const std::vector<Sensor>& sensors)
 		}
 	}
 
-	return fan_curve(max_temp, 0.2, 1.0, 40, 75);
+	return fan_curve(max_temp, 0.20, 1.0, 45, 75);
 }
 
 double system_fan_zone(const std::vector<Sensor>& sensors)
@@ -100,8 +100,8 @@ double system_fan_zone(const std::vector<Sensor>& sensors)
 			system = sensor;
 	}
 
-	double fanSystem = fan_curve(system.reading, 0.2, 1.0, 35, 45);
-	double fanCpu = fan_curve(cpu.reading, 0.2, 1.0, 40, 70);
+	double fanSystem = fan_curve(system.reading, 0.33, 1.0, 40, 65);
+	double fanCpu = fan_curve(cpu.reading, 0.33, 1.0, 40, 70);
 
 	return std::max(fanSystem, fanCpu);
 }
@@ -116,13 +116,19 @@ std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
 
 ipmi_ctx_t ipmi_open()
 {
-	ipmi_ctx_t ctx = nullptr;
+	ipmi_ctx_t ctx = ipmi_ctx_create();
+	if(!ctx)
+	{
+		std::cerr<<"Could not allocae raw context\n";
+		return nullptr;
+	}
 
 	ipmi_driver_type_t driver = IPMI_DEVICE_OPENIPMI;
 	int ret = ipmi_ctx_find_inband(ctx, &driver, false, 0, 0, nullptr, 0, 0);
 	if(ret < 0)
 	{
 		std::cerr<<"Could not create raw context "<<ipmi_ctx_errormsg(ctx)<<'\n';
+		ipmi_ctx_destroy(ctx);
 		return nullptr;
 	}
 	return ctx;
@@ -130,7 +136,9 @@ ipmi_ctx_t ipmi_open()
 
 bool ipmi_set_fan_group(ipmi_ctx_t raw_ctx, uint8_t group, double speed)
 {
-	char converted_speed = std::min(std::max(static_cast<char>(64), static_cast<char>(speed*64)), static_cast<char>(0));
+	char converted_speed = std::max(std::min(static_cast<char>(100), static_cast<char>(speed*100)), static_cast<char>(0));
+
+	std::cout<<"setting fan group "<<static_cast<int>(group)<<" to "<<speed*100<<"% ("<<static_cast<int>(converted_speed)<<")\n";
 
 	char command[] = {0x70, 0x66, 0x01, static_cast<char>(group), converted_speed};
 	char bytesrx[IPMI_RAW_MAX_ARGS] = {0};
@@ -143,7 +151,7 @@ bool ipmi_set_fan_group(ipmi_ctx_t raw_ctx, uint8_t group, double speed)
 	return true;
 }
 
-int main (int argc, char **argv)
+int main(int argc, char **argv)
 {
 	signal(SIGABRT, sig_handler);
 	signal(SIGTERM, sig_handler);
@@ -169,15 +177,15 @@ int main (int argc, char **argv)
 	if(!raw_ctx)
 		return 1;
 
-
-
 	while(running)
 	{
 		std::vector<Sensor> sensors = gather_sensors(ipmi_sensors, monitoring_ctx, lm_chips);
+		for(const Sensor& sensor : sensors)
+			std::cout<<"Sensor "<<sensor.chip<<':'<<sensor.name<<"\t= "<<sensor.reading<<'\n';
 		std::vector<double> fanzones = get_fan_zones(sensors);
-		for(const double fanzone : fanzones)
-			std::cout<<fanzone<<'\n';
-		sleep(1);
+		ipmi_set_fan_group(raw_ctx, 0, fanzones[0]);
+		ipmi_set_fan_group(raw_ctx, 1, fanzones[1]);
+		sleep(10);
 	}
 
 	ipmi_ctx_close(raw_ctx);
