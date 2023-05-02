@@ -1,4 +1,5 @@
 #include "lm.h"
+#include <sensors/sensors.h>
 
 std::vector<const sensors_chip_name*> lm_get_chips(const std::string& match)
 {
@@ -52,7 +53,12 @@ std::vector<Sensor> lm_get_temperatures(std::vector<const sensors_chip_name*>& c
 					<<subfeature->number<<' '<<subfeature->name<<": "<<sensors_strerror(ret)<<'\n';
 				continue;
 			}
+
+			char name[256];
+			sensors_snprintf_chip_name(name, sizeof(name), chip);
+
 			Sensor sensor;
+			sensor.chip.assign(name);
 			sensor.name.assign(sensors_get_label(chip, feature));
 			sensor.id = subfeature->number;
 			sensor.reading = val;
