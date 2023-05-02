@@ -133,7 +133,9 @@ int main (int argc, char **argv)
 	while(running)
 	{
 		std::vector<Sensor> sensors = gather_sensors(ipmi_sensors, ctx, lm_chips);
-		get_fan_zones(sensors);
+		std::vector<double> fanzones = get_fan_zones(sensors);
+		for(const double fanzone : fanzones)
+			std::cout<<fanzone<<'\n';
 		sleep(1);
 	}
 
