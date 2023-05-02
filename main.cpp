@@ -6,6 +6,7 @@
 #include <sensors/sensors.h>
 #include <sensors/error.h>
 #include <signal.h>
+#include <limits>
 
 #include "ipmi.h"
 #include "lm.h"
@@ -54,13 +55,56 @@ std::vector<Sensor> gather_sensors(std::vector<Sensor>& ipmi_sensors, ipmi_monit
 	return out;
 }
 
-std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
+double fan_curve(double temperature, double min_fan, double max_fan, double low_temperature, double high_temperature)
 {
+	double slope = (max_fan-min_fan)/(low_temperature-high_temperature);
+	return std::min(max_fan, min_fan+slope*temperature-low_temperature);
+}
+
+double gpu_fan_zone(const std::vector<Sensor>& sensors)
+{
+	const char mi50Chip[] = "amdgpu-pci-2300";
+	const char mi25Chip[] = "amdgpu-pci-4300";
+	const char monitored_sensor_name[] = "edge";
+
+	double max_temp = std::numeric_limits<double>::min();
+	for(const Sensor& sensor : sensors)
+	{
+		if((sensor.chip == mi50Chip || sensor.chip == mi25Chip) && sensor.name == monitored_sensor_name)
+		{
+			if(max_temp < sensor.reading)
+				max_temp = sensor.reading;
+		}
+	}
+
+	return fan_curve(max_temp, 0.2, 1.0, 40, 75);
+}
+
+double system_fan_zone(const std::vector<Sensor>& sensors)
+{
+	Sensor cpu("IPMI", "CPU Temp");
+	Sensor system("IPMI", "System Temp");
 	std::vector<double> out;
 
 	for(const Sensor& sensor : sensors)
-		std::cout<<sensor.chip<<' '<<sensor.name<<": "<<sensor.reading<<'\n';
+	{
+		if(cpu == sensor)
+			cpu = sensor;
+		else if(sensor == system)
+			system = sensor;
+	}
 
+	double fanSystem = fan_curve(system.reading, 0.2, 1.0, 35, 45);
+	double fanCpu = fan_curve(cpu.reading, 0.2, 1.0, 40, 70);
+
+	return std::max(fanSystem, fanCpu);
+}
+
+std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
+{
+	std::vector<double> out;
+	out.push_back(system_fan_zone(sensors));
+	out.push_back(gpu_fan_zone(sensors));
 	return out;
 }
 
