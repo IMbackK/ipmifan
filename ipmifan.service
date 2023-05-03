@@ -4,7 +4,7 @@ After=lm_sensors.service systemd-modules-load.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/ipmifan
+ExecStart=/usr/bin/ipmifan -q
 
 [Install]
 WantedBy=multi-user.target

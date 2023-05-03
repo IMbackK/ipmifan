@@ -23,6 +23,8 @@ void sig_handler(int sig)
 	running = false;
 }
 
+bool quiet;
+
 std::vector<Sensor> gather_sensors(std::vector<Sensor>& ipmi_sensors, ipmi_monitoring_ctx_t ctx, std::vector<const sensors_chip_name*>& lm_chips)
 {
 	std::vector<Sensor> out;
@@ -119,6 +121,9 @@ int main(int argc, char **argv)
 	signal(SIGHUP, sig_handler);
 	signal(SIGINT, sig_handler);
 
+	if(argc > 1)
+		quiet = true;
+
 	int ret = sensors_init(nullptr);
 	if(ret < 0)
 	{
@@ -141,9 +146,16 @@ int main(int argc, char **argv)
 	while(running)
 	{
 		std::vector<Sensor> sensors = gather_sensors(ipmi_sensors, monitoring_ctx, lm_chips);
-		for(const Sensor& sensor : sensors)
-			std::cout<<"Sensor "<<sensor.chip<<':'<<sensor.name<<"\t= "<<sensor.reading<<'\n';
 		std::vector<double> fanzones = get_fan_zones(sensors);
+
+		if(!quiet)
+		{
+			for(const Sensor& sensor : sensors)
+				std::cout<<"Sensor "<<sensor.chip<<':'<<sensor.name<<"\t= "<<sensor.reading<<'\n';
+			for(size_t i = 0; i < fanzones.size(); ++i)
+				std::cout<<"setting fan group "<<i<<" to "<<fanzones[i]*100<<"%\n";
+		}
+
 		ipmi_set_fan_group(raw_ctx, 0, fanzones[0]);
 		ipmi_set_fan_group(raw_ctx, 1, fanzones[1]);
 		sleep(10);

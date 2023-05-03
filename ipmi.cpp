@@ -128,9 +128,6 @@ ipmi_ctx_t ipmi_open_context()
 bool ipmi_set_fan_group(ipmi_ctx_t raw_ctx, uint8_t group, double speed)
 {
 	char converted_speed = std::max(std::min(static_cast<char>(100), static_cast<char>(speed*100)), static_cast<char>(0));
-
-	std::cout<<"setting fan group "<<static_cast<int>(group)<<" to "<<speed*100<<"% ("<<static_cast<int>(converted_speed)<<")\n";
-
 	char command[] = {0x70, 0x66, 0x01, static_cast<char>(group), converted_speed};
 	char bytesrx[IPMI_RAW_MAX_ARGS] = {0};
 	int rxlen = ipmi_cmd_raw(raw_ctx, 0, 0x30, command, sizeof(command), bytesrx, IPMI_RAW_MAX_ARGS);
