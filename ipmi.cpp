@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <iostream>
 
+static constexpr size_t IPMI_RAW_MAX_ARGS = 65536*2;
+
 static double ipmi_convert_sensor_reading(void *sensor_reading, int sensor_reading_type)
 {
 	if(sensor_reading_type == IPMI_MONITORING_SENSOR_READING_TYPE_UNSIGNED_INTEGER8_BOOL)
@@ -101,4 +103,41 @@ ipmi_monitoring_ctx_t init_ipmi_monitoring()
 	}
 
 	return ctx;
+}
+
+ipmi_ctx_t ipmi_open_context()
+{
+	ipmi_ctx_t ctx = ipmi_ctx_create();
+	if(!ctx)
+	{
+		std::cerr<<"Could not allocae raw context\n";
+		return nullptr;
+	}
+
+	ipmi_driver_type_t driver = IPMI_DEVICE_OPENIPMI;
+	int ret = ipmi_ctx_find_inband(ctx, &driver, false, 0, 0, nullptr, 0, 0);
+	if(ret < 0)
+	{
+		std::cerr<<"Could not create raw context "<<ipmi_ctx_errormsg(ctx)<<'\n';
+		ipmi_ctx_destroy(ctx);
+		return nullptr;
+	}
+	return ctx;
+}
+
+bool ipmi_set_fan_group(ipmi_ctx_t raw_ctx, uint8_t group, double speed)
+{
+	char converted_speed = std::max(std::min(static_cast<char>(100), static_cast<char>(speed*100)), static_cast<char>(0));
+
+	std::cout<<"setting fan group "<<static_cast<int>(group)<<" to "<<speed*100<<"% ("<<static_cast<int>(converted_speed)<<")\n";
+
+	char command[] = {0x70, 0x66, 0x01, static_cast<char>(group), converted_speed};
+	char bytesrx[IPMI_RAW_MAX_ARGS] = {0};
+	int rxlen = ipmi_cmd_raw(raw_ctx, 0, 0x30, command, sizeof(command), bytesrx, IPMI_RAW_MAX_ARGS);
+	if(rxlen < 0)
+	{
+		std::cerr<<"Raw write to ipmi failed with: "<<ipmi_ctx_errormsg(raw_ctx);
+		return false;
+	}
+	return true;
 }

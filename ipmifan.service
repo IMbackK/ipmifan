@@ -1,0 +1,10 @@
+[Unit]
+Description=Start impi fan control
+After=lm_sensors.service systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ipmifan
+
+[Install]
+WantedBy=multi-user.target
