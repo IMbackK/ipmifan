@@ -71,6 +71,8 @@ double gpu_fan_zone(const std::vector<Sensor>& sensors)
 {
 	const char mi50Chip[] = "amdgpu-pci-2300";
 	const char mi25Chip[] = "amdgpu-pci-4300";
+	bool hitMi25 = false;
+	bool hitMi50 = false;
 	const char monitored_sensor_name[] = "edge";
 
 	double max_temp = std::numeric_limits<double>::min();
@@ -78,32 +80,58 @@ double gpu_fan_zone(const std::vector<Sensor>& sensors)
 	{
 		if((sensor.chip == mi50Chip || sensor.chip == mi25Chip) && sensor.name == monitored_sensor_name)
 		{
+			if(sensor.chip == mi50Chip)
+				hitMi50 = true;
+			else
+				hitMi25 = true;
 			if(max_temp < sensor.reading)
 				max_temp = sensor.reading;
 		}
 	}
 
-	return fan_curve(max_temp, 0.20, 1.0, 45, 75);
+	if(!hitMi50 || !hitMi25)
+	{
+		std::cerr<<"Could not get temperature from MI25 or MI50! Ramping fans to maximum\n";
+		return 1.0;
+	}
+	else
+		return fan_curve(max_temp, 0.20, 1.0, 45, 75);
 }
 
 double system_fan_zone(const std::vector<Sensor>& sensors)
 {
 	Sensor cpu("IPMI", "CPU Temp");
 	Sensor system("IPMI", "System Temp");
+	bool hitCpu = false;
+	bool hitSystem = false;
 	std::vector<double> out;
 
 	for(const Sensor& sensor : sensors)
 	{
 		if(cpu == sensor)
+		{
+			hitCpu = true;
 			cpu = sensor;
+		}
 		else if(sensor == system)
+		{
+			hitSystem = true;
 			system = sensor;
+		}
 	}
 
-	double fanSystem = fan_curve(system.reading, 0.33, 1.0, 40, 65);
-	double fanCpu = fan_curve(cpu.reading, 0.33, 1.0, 40, 70);
+	if(hitCpu && hitSystem)
+	{
+		double fanSystem = fan_curve(system.reading, 0.33, 1.0, 40, 65);
+		double fanCpu = fan_curve(cpu.reading, 0.33, 1.0, 40, 70);
 
-	return std::max(fanSystem, fanCpu);
+		return std::max(fanSystem, fanCpu);
+	}
+	else
+	{
+		std::cerr<<"Could not get temperature from System or Cpu! Ramping fans to maximum\n";
+		return 1;
+	}
 }
 
 std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
@@ -114,20 +142,24 @@ std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
 	return out;
 }
 
-int main(int argc, char **argv)
+int main_loop()
 {
-	signal(SIGABRT, sig_handler);
-	signal(SIGTERM, sig_handler);
-	signal(SIGHUP, sig_handler);
-	signal(SIGINT, sig_handler);
-
-	if(argc > 1)
-		quiet = true;
+	ipmi_ctx_t raw_ctx = ipmi_open_context();
+	if(!raw_ctx)
+	{
+		sensors_cleanup();
+		return 1;
+	}
 
 	int ret = sensors_init(nullptr);
 	if(ret < 0)
 	{
 		std::cerr<<"Could not init lm_sensors\n";
+		ipmi_set_fan_group(raw_ctx, 0, 1);
+		ipmi_set_fan_group(raw_ctx, 1, 1);
+		ipmi_ctx_close(raw_ctx);
+		ipmi_ctx_destroy(raw_ctx);
+		return 1;
 	}
 
 	std::vector<const sensors_chip_name*> lm_chips = lm_get_chips("amdgpu-*");
@@ -135,13 +167,28 @@ int main(int argc, char **argv)
 	ipmi_sensors.push_back(Sensor("IPMI", "CPU Temp"));
 	ipmi_sensors.push_back(Sensor("IPMI", "System Temp"));
 
+	if(lm_chips.size() < 2)
+	{
+		std::cerr<<"Could not get both monitored gpus!";
+		ipmi_set_fan_group(raw_ctx, 0, 1);
+		ipmi_set_fan_group(raw_ctx, 1, 1);
+		ipmi_ctx_close(raw_ctx);
+		ipmi_ctx_destroy(raw_ctx);
+		sensors_cleanup();
+		return 1;
+	}
+
 	ipmi_monitoring_ctx_t monitoring_ctx = init_ipmi_monitoring();
 	if(!monitoring_ctx)
+	{
+		ipmi_set_fan_group(raw_ctx, 0, 1);
+		ipmi_set_fan_group(raw_ctx, 1, 1);
+		ipmi_ctx_close(raw_ctx);
+		ipmi_ctx_destroy(raw_ctx);
+		sensors_cleanup();
 		return 1;
+	}
 
-	ipmi_ctx_t raw_ctx = ipmi_open_context();
-	if(!raw_ctx)
-		return 1;
 
 	while(running)
 	{
@@ -161,10 +208,39 @@ int main(int argc, char **argv)
 		sleep(10);
 	}
 
+	ipmi_set_fan_group(raw_ctx, 0, 1);
+	ipmi_set_fan_group(raw_ctx, 1, 1);
 	ipmi_ctx_close(raw_ctx);
 	ipmi_ctx_destroy(raw_ctx);
 	ipmi_monitoring_ctx_destroy(monitoring_ctx);
 	sensors_cleanup();
+
 	return 0;
+}
+
+int main (int argc, char **argv)
+{
+	signal(SIGABRT, sig_handler);
+	signal(SIGTERM, sig_handler);
+	signal(SIGHUP, sig_handler);
+	signal(SIGINT, sig_handler);
+
+	if(argc > 1)
+		quiet = true;
+
+	int ret = 0;
+	for(size_t i = 0; i < 3; ++i)
+	{
+		ret = main_loop();
+		if(!running)
+			break;
+		std::cerr<<"Mainloop unable to start, retrying in 10 sec\n";
+		sleep(10);
+	}
+
+	if(ret != 0)
+		std::cerr<<"Error not clearing, giveing up\n";
+
+	return ret;
 }
 
