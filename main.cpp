@@ -95,7 +95,7 @@ double gpu_fan_zone(const std::vector<Sensor>& sensors)
 		return 1.0;
 	}
 	else
-		return fan_curve(max_temp, 0.20, 1.0, 45, 75);
+		return fan_curve(max_temp, 0.10, 1.0, 45, 75);
 }
 
 double system_fan_zone(const std::vector<Sensor>& sensors)
