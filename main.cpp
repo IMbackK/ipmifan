@@ -12,8 +12,9 @@
 #include <limits>
 #include <freeipmi/freeipmi.h>
 
-#include "ipmi.h"
+
 #include "lm.h"
+#include "pwmfan.h"
 
 sig_atomic_t running = true;
 
@@ -25,42 +26,6 @@ void sig_handler(int sig)
 
 bool quiet;
 
-std::vector<Sensor> gather_sensors(std::vector<Sensor>& ipmi_sensors, ipmi_monitoring_ctx_t ctx, std::vector<const sensors_chip_name*>& lm_chips)
-{
-	std::vector<Sensor> out;
-	struct ipmi_monitoring_ipmi_config ipmi_config = {};
-	ipmi_config.driver_type = IPMI_MONITORING_DRIVER_TYPE_OPENIPMI;
-
-	bool grabids = false;
-	for(Sensor& sensor : ipmi_sensors)
-	{
-		if(sensor.id <= 0)
-		{
-			grabids = true;
-			break;
-		}
-	}
-
-	if(grabids)
-	{
-		if(!ipmi_fill_sensor_ids(ipmi_sensors, ctx, &ipmi_config))
-		{
-			std::cout<<"could not get ids for all the required sensors\n";
-			return out;
-		}
-	}
-	else
-	{
-		ipmi_update_sensors(ipmi_sensors, ctx, &ipmi_config);
-	}
-
-	out.insert(out.end(), ipmi_sensors.begin(), ipmi_sensors.end());
-	std::vector<Sensor> lm_sensors = lm_get_temperatures(lm_chips);
-	out.insert(out.end(), lm_sensors.begin(), lm_sensors.end());
-
-	return out;
-}
-
 double fan_curve(double temperature, double min_fan, double max_fan, double low_temperature, double high_temperature)
 {
 	double slope = (max_fan-min_fan)/(high_temperature-low_temperature);
@@ -69,85 +34,35 @@ double fan_curve(double temperature, double min_fan, double max_fan, double low_
 
 double gpu_fan_zone(const std::vector<Sensor>& sensors)
 {
-	const char mi50Chip[] = "amdgpu-pci-2300";
 	const char mi25Chip[] = "amdgpu-pci-4300";
 	bool hitMi25 = false;
-	bool hitMi50 = false;
 	const char monitored_sensor_name[] = "edge";
 
 	double max_temp = std::numeric_limits<double>::min();
 	for(const Sensor& sensor : sensors)
 	{
-		if((sensor.chip == mi50Chip || sensor.chip == mi25Chip) && sensor.name == monitored_sensor_name)
+		if(sensor.chip == mi25Chip && sensor.name == monitored_sensor_name)
 		{
-			if(sensor.chip == mi50Chip)
-				hitMi50 = true;
-			else
-				hitMi25 = true;
+			hitMi25 = true;
 			if(max_temp < sensor.reading)
 				max_temp = sensor.reading;
 		}
 	}
-
-	if(!hitMi50 || !hitMi25)
+	if(!hitMi25)
 	{
-		std::cerr<<"Could not get temperature from MI25 or MI50! Ramping fans to maximum\n";
+		std::cerr<<"Could not get temperature from MI25 Ramping fans to maximum\n";
 		return 1.0;
 	}
 	else
 		return fan_curve(max_temp, 0.10, 1.0, 45, 75);
 }
 
-double system_fan_zone(const std::vector<Sensor>& sensors)
-{
-	Sensor cpu("IPMI", "CPU Temp");
-	Sensor system("IPMI", "System Temp");
-	bool hitCpu = false;
-	bool hitSystem = false;
-	std::vector<double> out;
-
-	for(const Sensor& sensor : sensors)
-	{
-		if(cpu == sensor)
-		{
-			hitCpu = true;
-			cpu = sensor;
-		}
-		else if(sensor == system)
-		{
-			hitSystem = true;
-			system = sensor;
-		}
-	}
-
-	if(hitCpu && hitSystem)
-	{
-		double fanSystem = fan_curve(system.reading, 0.33, 1.0, 40, 65);
-		double fanCpu = fan_curve(cpu.reading, 0.33, 1.0, 40, 70);
-
-		return std::max(fanSystem, fanCpu);
-	}
-	else
-	{
-		std::cerr<<"Could not get temperature from System or Cpu! Ramping fans to maximum\n";
-		return 1;
-	}
-}
-
-std::vector<double> get_fan_zones(const std::vector<Sensor>& sensors)
-{
-	std::vector<double> out;
-	out.push_back(system_fan_zone(sensors));
-	out.push_back(gpu_fan_zone(sensors));
-	return out;
-}
-
 int main_loop()
 {
-	ipmi_ctx_t raw_ctx = ipmi_open_context();
-	if(!raw_ctx)
+	PwmFan gpuFan("/sys/class/hwmon/hwmon4/", 2);
+	if(!gpuFan.ready())
 	{
-		sensors_cleanup();
+		std::cerr<<"Could not open pwm2 on /sys/class/hwmon/hwmon4/\n";
 		return 1;
 	}
 
@@ -155,36 +70,16 @@ int main_loop()
 	if(ret < 0)
 	{
 		std::cerr<<"Could not init lm_sensors\n";
-		ipmi_set_fan_group(raw_ctx, 0, 1);
-		ipmi_set_fan_group(raw_ctx, 1, 1);
-		ipmi_ctx_close(raw_ctx);
-		ipmi_ctx_destroy(raw_ctx);
+		gpuFan.setSpeed(1.0);
 		return 1;
 	}
 
 	std::vector<const sensors_chip_name*> lm_chips = lm_get_chips("amdgpu-*");
-	std::vector<Sensor> ipmi_sensors;
-	ipmi_sensors.push_back(Sensor("IPMI", "CPU Temp"));
-	ipmi_sensors.push_back(Sensor("IPMI", "System Temp"));
 
-	if(lm_chips.size() < 2)
+	if(lm_chips.size() < 1)
 	{
-		std::cerr<<"Could not get both monitored gpus!";
-		ipmi_set_fan_group(raw_ctx, 0, 1);
-		ipmi_set_fan_group(raw_ctx, 1, 1);
-		ipmi_ctx_close(raw_ctx);
-		ipmi_ctx_destroy(raw_ctx);
-		sensors_cleanup();
-		return 1;
-	}
-
-	ipmi_monitoring_ctx_t monitoring_ctx = init_ipmi_monitoring();
-	if(!monitoring_ctx)
-	{
-		ipmi_set_fan_group(raw_ctx, 0, 1);
-		ipmi_set_fan_group(raw_ctx, 1, 1);
-		ipmi_ctx_close(raw_ctx);
-		ipmi_ctx_destroy(raw_ctx);
+		std::cerr<<"Could not get gpus sensor";
+		gpuFan.setSpeed(1.0);
 		sensors_cleanup();
 		return 1;
 	}
@@ -192,27 +87,20 @@ int main_loop()
 
 	while(running)
 	{
-		std::vector<Sensor> sensors = gather_sensors(ipmi_sensors, monitoring_ctx, lm_chips);
-		std::vector<double> fanzones = get_fan_zones(sensors);
+		std::vector<Sensor> sensors = lm_get_temperatures(lm_chips);
+		double fanZone = gpu_fan_zone(sensors);
 
 		if(!quiet)
 		{
 			for(const Sensor& sensor : sensors)
 				std::cout<<"Sensor "<<sensor.chip<<':'<<sensor.name<<"\t= "<<sensor.reading<<'\n';
-			for(size_t i = 0; i < fanzones.size(); ++i)
-				std::cout<<"setting fan group "<<i<<" to "<<fanzones[i]*100<<"%\n";
+			std::cout<<"target gpu fan speed "<<fanZone*100<<"%\n";
 		}
 
-		ipmi_set_fan_group(raw_ctx, 0, fanzones[0]);
-		ipmi_set_fan_group(raw_ctx, 1, fanzones[1]);
+		gpuFan.setSpeed(fanZone);
 		sleep(10);
 	}
 
-	ipmi_set_fan_group(raw_ctx, 0, 1);
-	ipmi_set_fan_group(raw_ctx, 1, 1);
-	ipmi_ctx_close(raw_ctx);
-	ipmi_ctx_destroy(raw_ctx);
-	ipmi_monitoring_ctx_destroy(monitoring_ctx);
 	sensors_cleanup();
 
 	return 0;
