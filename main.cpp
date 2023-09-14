@@ -69,33 +69,35 @@ double fan_curve(double temperature, double min_fan, double max_fan, double low_
 
 double gpu_fan_zone(const std::vector<Sensor>& sensors)
 {
-	const char mi50Chip[] = "amdgpu-pci-2300";
-	const char mi25Chip[] = "amdgpu-pci-4300";
-	bool hitMi25 = false;
-	bool hitMi50 = false;
+	std::vector<std::pair<std::string, bool>> gpus = {{"amdgpu-pci-0300", false}, {"amdgpu-pci-c300", false}};
 	const char monitored_sensor_name[] = "edge";
 
 	double max_temp = std::numeric_limits<double>::min();
 	for(const Sensor& sensor : sensors)
 	{
-		if((sensor.chip == mi50Chip || sensor.chip == mi25Chip) && sensor.name == monitored_sensor_name)
+		if(sensor.name == monitored_sensor_name)
 		{
-			if(sensor.chip == mi50Chip)
-				hitMi50 = true;
-			else
-				hitMi25 = true;
-			if(max_temp < sensor.reading)
-				max_temp = sensor.reading;
+			for(std::pair<std::string, bool>& gpu : gpus)
+			{
+				if(sensor.chip == gpu.first)
+				{
+					gpu.second = true;
+				}
+				if(max_temp < sensor.reading)
+					max_temp = sensor.reading;
+			}
+		}
+	}
+	for(std::pair<std::string, bool>& gpu : gpus)
+	{
+		if(!gpu.second)
+		{
+			std::cerr<<"Could not get temperature from "<<gpu.first<<" ramping fans to maximum\n";
+			return 1.0;
 		}
 	}
 
-	if(!hitMi50 || !hitMi25)
-	{
-		std::cerr<<"Could not get temperature from MI25 or MI50! Ramping fans to maximum\n";
-		return 1.0;
-	}
-	else
-		return fan_curve(max_temp, 0.10, 1.0, 45, 75);
+	return fan_curve(max_temp, 0.10, 1.0, 45, 75);
 }
 
 double system_fan_zone(const std::vector<Sensor>& sensors)
