@@ -69,7 +69,7 @@ double fan_curve(double temperature, double min_fan, double max_fan, double low_
 
 double gpu_fan_zone(const std::vector<Sensor>& sensors)
 {
-	std::vector<std::pair<std::string, bool>> gpus = {{"amdgpu-pci-0300", false}, {"amdgpu-pci-8300", false}};
+	std::vector<std::pair<std::string, bool>> gpus = {{"amdgpu-pci-0300", false}, {"amdgpu-pci-8300", false}, {"amdgpu-pci-8900", false}};
 	const char monitored_sensor_name[] = "edge";
 
 	double max_temp = std::numeric_limits<double>::min();
