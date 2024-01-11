@@ -81,10 +81,10 @@ double gpu_fan_zone(const std::vector<Sensor>& sensors)
 			{
 				if(sensor.chip == gpu.first)
 				{
+					if(max_temp < sensor.reading)
+						max_temp = sensor.reading;
 					gpu.second = true;
 				}
-				if(max_temp < sensor.reading)
-					max_temp = sensor.reading;
 			}
 		}
 	}
@@ -97,7 +97,7 @@ double gpu_fan_zone(const std::vector<Sensor>& sensors)
 		}
 	}
 
-	return fan_curve(max_temp, 0.10, 1.0, 45, 75);
+	return fan_curve(max_temp, 0.05, 1.0, 45, 75);
 }
 
 double system_fan_zone(const std::vector<Sensor>& sensors)
